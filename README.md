@@ -42,6 +42,7 @@ python -m sipflow.server
 
 When credentials are configured, SIPFLOW shows a login page at `/login` and
 uses an HttpOnly session cookie after sign-in.
+<img width="1" height="6" alt="image" src="https://github.com/user-attachments/assets/895db699-6f05-4b9a-9e73-dac5d2508975" />
 
 Open:
 
@@ -54,6 +55,7 @@ a simple ladder view, raw SIP message inspection, and basic RTP media
 diagnostics learned from SDP.
 
 ## Self-host With Docker
+![Uploading image.png…]()
 
 On a Linux host where SIP traffic is visible:
 
