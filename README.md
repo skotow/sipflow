@@ -1,9 +1,30 @@
 # SIPFLOW
 
-Browser-first SIP capture and call-flow viewer inspired by `sngrep`.
+Browser-based SIP/RTP troubleshooting dashboard for self-hosted VoIP systems.
 
-This first server-side MVP captures SIP packets locally and exposes them over a
-small HTTP API plus Server-Sent Events.
+SIPFLOW captures SIP packets locally, groups them into calls, shows call-flow
+diagrams in the browser, and provides basic RTP/media diagnostics.
+
+> **MVP warning:** do not expose SIPFLOW directly to the public internet. Run it
+> on a private management network, VPN, or behind a hardened HTTPS reverse proxy.
+> SIP metadata and recorded audio can be sensitive.
+
+## Features
+
+- Live SIP capture from a visible host interface.
+- Browser dashboard with call list, filters, and SIP ladder diagram.
+- SIP message inspection with raw packet details.
+- SDP media endpoint parsing.
+- RTP flow detection, packet counts, jitter estimate, loss estimate, and codec.
+- One-way audio, no-RTP-after-answer, and private-SDP-IP warnings.
+- Optional audio recording/playback for supported codecs.
+- Docker and Linux systemd installer options.
+
+## Privacy
+
+Audio recording is off by default. Enable `Record audio` only when you have a
+specific troubleshooting need and legal consent to record. Users/operators are
+responsible for complying with local laws and customer/privacy obligations.
 
 ## Run
 
@@ -157,3 +178,22 @@ encrypted and cannot be inspected here.
 SIPFLOW must run on a machine that can actually see the SIP packets. Good
 locations are the PBX host, SBC host, SIP proxy host, router/firewall host, or a
 server connected to a SPAN/mirror port.
+
+## Limitations
+
+- Experimental MVP, not yet a hardened production security appliance.
+- No built-in HTTPS.
+- No rate limiting or brute-force protection.
+- Single local username/password configuration.
+- In-memory capture state only.
+- SIP over TLS and SRTP contents are not decrypted.
+- TCP SIP stream reassembly is best-effort.
+- Docker/Linux deployment is preferred for server use.
+
+## Security
+
+See [SECURITY.md](SECURITY.md).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
