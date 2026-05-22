@@ -1,3 +1,4 @@
+<img width="1" height="6" alt="image" src="https://github.com/user-attachments/assets/ce2992ba-a483-4a00-bcee-f76e5ba9f736" />
 # SIPFLOW
 
 Browser-based SIP/RTP troubleshooting dashboard for self-hosted VoIP systems.
@@ -42,7 +43,7 @@ python -m sipflow.server
 
 When credentials are configured, SIPFLOW shows a login page at `/login` and
 uses an HttpOnly session cookie after sign-in.
-<img width="1" height="6" alt="image" src="https://github.com/user-attachments/assets/895db699-6f05-4b9a-9e73-dac5d2508975" />
+<img width="1911" height="909" alt="image" src="https://github.com/user-attachments/assets/7e967192-263d-4aeb-aeca-3dfeaf39d26b" />
 
 Open:
 
