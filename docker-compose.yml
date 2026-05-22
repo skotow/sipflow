@@ -1,0 +1,13 @@
+services:
+  sipflow:
+    build: .
+    container_name: sipflow
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      SIPFLOW_AUTH_USER: ${SIPFLOW_AUTH_USER:-admin}
+      SIPFLOW_AUTH_PASSWORD: ${SIPFLOW_AUTH_PASSWORD:-change-me}
+    restart: unless-stopped
+    command: ["python", "-m", "sipflow.server", "--host", "0.0.0.0", "--port", "${SIPFLOW_PORT:-8080}"]
