@@ -139,13 +139,14 @@ class PacketCapture:
         ports: set[int],
         ignore_methods: set[str] | None = None,
         record_audio: bool = False,
+        timestamp: str | None = None,
     ) -> None:
         parsed = parse_ipv4_transport(packet)
         if parsed is None:
             return
 
         src_ip, dst_ip, protocol, src_port, dst_port, payload = parsed
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = timestamp or datetime.now(timezone.utc).isoformat()
         if protocol == 17 and self._on_rtp_packet:
             rtp = parse_rtp_packet(payload, src_ip, src_port, dst_ip, dst_port, timestamp)
             if rtp:

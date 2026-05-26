@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .capture import CaptureConfig, PacketCapture, list_interfaces
+from .pcap import PcapImportConfig, import_pcap
 from .rtp import RtpPacket
 from .sip import CallStore, SipMessage
 
@@ -89,6 +90,10 @@ INDEX_HTML = """<!doctype html>
       background: #fff;
       color: var(--text);
       padding: 0 10px;
+    }
+
+    input[type="file"] {
+      display: none;
     }
 
     .app {
@@ -599,6 +604,8 @@ INDEX_HTML = """<!doctype html>
         <button class="primary" id="startButton" type="submit">Start</button>
         <button class="danger" id="stopButton" type="button">Stop</button>
         <button id="clearButton" type="button">Clear</button>
+        <button id="importButton" type="button">Import PCAP</button>
+        <input id="pcapInput" type="file" accept=".pcap,.pcapng,.cap,.pcap.gz,application/vnd.tcpdump.pcap" />
         <button id="logoutButton" type="button">Logout</button>
         <div class="notice" id="notice"></div>
       </form>
@@ -690,6 +697,8 @@ INDEX_HTML = """<!doctype html>
       startButton: document.querySelector('#startButton'),
       stopButton: document.querySelector('#stopButton'),
       clearButton: document.querySelector('#clearButton'),
+      importButton: document.querySelector('#importButton'),
+      pcapInput: document.querySelector('#pcapInput'),
       logoutButton: document.querySelector('#logoutButton'),
       refreshButton: document.querySelector('#refreshButton'),
       notice: document.querySelector('#notice'),
@@ -1120,6 +1129,34 @@ INDEX_HTML = """<!doctype html>
       render();
     });
 
+    els.importButton.addEventListener('click', () => {
+      els.pcapInput.click();
+    });
+
+    els.pcapInput.addEventListener('change', async () => {
+      const file = els.pcapInput.files && els.pcapInput.files[0];
+      if (!file) return;
+      els.notice.textContent = '';
+      const form = new FormData();
+      form.append('pcap', file);
+      form.append('ports', els.portsInput.value);
+      form.append('ignore_methods', selectedIgnoredMethods().join(','));
+      form.append('record_audio', els.recordAudio.checked ? '1' : '0');
+      try {
+        const response = await fetch('/api/pcap/upload', { method: 'POST', body: form });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'PCAP import failed');
+        }
+        els.notice.textContent = `Imported ${data.stats.sipMessages} SIP messages from ${data.stats.packets} packets`;
+        await loadCalls();
+      } catch (error) {
+        els.notice.textContent = error.message;
+      } finally {
+        els.pcapInput.value = '';
+      }
+    });
+
     els.logoutButton.addEventListener('click', async () => {
       await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
       window.location.href = '/login';
@@ -1459,6 +1496,9 @@ class SipflowHandler(BaseHTTPRequestHandler):
             self.state.events.publish({"type": "calls_cleared"})
             self.send_json({"ok": True})
             return
+        if self.path == "/api/pcap/upload":
+            self.upload_pcap()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def send_audio(self, query: str) -> None:
@@ -1470,6 +1510,28 @@ class SipflowHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "audio not found"}, status=HTTPStatus.NOT_FOUND)
             return
         self.send_bytes(audio, "audio/wav")
+
+    def upload_pcap(self) -> None:
+        try:
+            fields = self.read_multipart_form()
+            pcap_data = fields.get("pcap", b"")
+            ports_text = fields.get("ports", b"5060").decode("utf-8", errors="replace")
+            ignore_text = fields.get("ignore_methods", b"").decode("utf-8", errors="replace")
+            record_audio = fields.get("record_audio", b"0") == b"1"
+            ports = {int(port.strip()) for port in ports_text.split(",") if port.strip()}
+            ignore_methods = {method.strip().upper() for method in ignore_text.split(",") if method.strip()}
+            if not ports:
+                ports = {5060}
+            stats = import_pcap(
+                pcap_data,
+                PcapImportConfig(ports=ports, ignore_methods=ignore_methods, record_audio=record_audio),
+                self.state.on_sip_message,
+                self.state.on_rtp_packet,
+            )
+            self.state.events.publish({"type": "pcap_imported", "stats": stats.to_dict()})
+            self.send_json({"ok": True, "stats": stats.to_dict()})
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -1611,6 +1673,45 @@ class SipflowHandler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def read_multipart_form(self) -> dict[str, bytes]:
+        content_type = self.headers.get("Content-Type", "")
+        marker = "boundary="
+        if marker not in content_type:
+            raise ValueError("multipart/form-data upload is required")
+
+        boundary = content_type.split(marker, 1)[1].split(";", 1)[0].strip().strip('"')
+        if not boundary:
+            raise ValueError("missing multipart boundary")
+
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            raise ValueError("empty upload")
+        if length > 100 * 1024 * 1024:
+            raise ValueError("PCAP upload is limited to 100 MB")
+
+        body = self.rfile.read(length)
+        delimiter = b"--" + boundary.encode("utf-8")
+        fields: dict[str, bytes] = {}
+        for part in body.split(delimiter):
+            part = part.strip()
+            if not part or part == b"--":
+                continue
+            if part.endswith(b"--"):
+                part = part[:-2].strip()
+            header_blob, separator, value = part.partition(b"\r\n\r\n")
+            if not separator:
+                continue
+            name = multipart_name(header_blob.decode("utf-8", errors="replace"))
+            if not name:
+                continue
+            if value.endswith(b"\r\n"):
+                value = value[:-2]
+            fields[name] = value
+
+        if "pcap" not in fields:
+            raise ValueError("missing pcap file")
+        return fields
+
     def send_json(
         self,
         payload: dict[str, Any],
@@ -1647,6 +1748,17 @@ class SipflowHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"{self.address_string()} - {format % args}")
+
+
+def multipart_name(header_blob: str) -> str | None:
+    for line in header_blob.splitlines():
+        if not line.lower().startswith("content-disposition:"):
+            continue
+        for item in line.split(";"):
+            key, separator, value = item.strip().partition("=")
+            if separator and key.lower() == "name":
+                return value.strip().strip('"')
+    return None
 
 
 def create_server(

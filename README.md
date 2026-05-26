@@ -18,6 +18,7 @@ diagrams in the browser, and provides basic RTP/media diagnostics.
 - RTP flow detection, packet counts, jitter estimate, loss estimate, and codec.
 - One-way audio, no-RTP-after-answer, and private-SDP-IP warnings.
 - Optional audio recording/playback for supported codecs.
+- `.pcap` / `.pcapng` / `.pcap.gz` import for offline troubleshooting and demos.
 - Docker and Linux systemd installer options.
 
 ## Privacy
@@ -138,6 +139,7 @@ sudo journalctl -u sipflow -f
 - `GET /api/interfaces` - list local IPv4 addresses that can be used for capture.
 - `POST /api/capture/start` - start capture.
 - `POST /api/capture/stop` - stop capture.
+- `POST /api/pcap/upload` - import a `.pcap`, `.pcapng`, or `.pcap.gz` capture.
 - `GET /api/capture/status` - capture status.
 - `GET /api/calls` - current in-memory calls grouped by SIP `Call-ID`.
 - `GET /api/events` - live Server-Sent Events stream.
@@ -186,6 +188,7 @@ server connected to a SPAN/mirror port.
 - No rate limiting or brute-force protection.
 - Single local username/password configuration.
 - In-memory capture state only.
+- PCAP import currently supports common Ethernet/raw IPv4/Linux cooked captures.
 - SIP over TLS and SRTP contents are not decrypted.
 - TCP SIP stream reassembly is best-effort.
 - Docker/Linux deployment is preferred for server use.

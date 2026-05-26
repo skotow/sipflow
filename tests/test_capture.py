@@ -1,8 +1,10 @@
 import socket
 import struct
 import unittest
+import gzip
 
 from sipflow.capture import PacketCapture, parse_ipv4_transport
+from sipflow.pcap import PcapImportConfig, import_pcap
 from sipflow.rtp import parse_rtp_packet
 from sipflow.sip import CallStore, parse_sip_message
 
@@ -194,6 +196,95 @@ class SipParsingTests(unittest.TestCase):
         self.assertEqual(dst_port, 5080)
         self.assertEqual(parsed_payload, payload)
 
+    def test_import_classic_pcap_with_sip_packet(self) -> None:
+        seen = []
+        payload = (
+            b"INVITE sip:1000@example.com SIP/2.0\r\n"
+            b"Call-ID: pcap123\r\n"
+            b"From: <sip:100@example.com>;tag=a\r\n"
+            b"To: <sip:1000@example.com>\r\n"
+            b"CSeq: 1 INVITE\r\n\r\n"
+        )
+        ipv4 = build_ipv4_udp_packet("10.0.0.1", "10.0.0.2", 5060, 5080, payload)
+        pcap = build_pcap(build_ethernet_ipv4_frame(ipv4))
+
+        stats = import_pcap(
+            pcap,
+            PcapImportConfig(ports={5060}, ignore_methods=set()),
+            seen.append,
+        )
+
+        self.assertEqual(stats.packets, 1)
+        self.assertEqual(stats.ipv4_packets, 1)
+        self.assertEqual(stats.sip_messages, 1)
+        self.assertEqual(seen[0].call_id, "pcap123")
+
+    def test_import_pcapng_with_sip_packet(self) -> None:
+        seen = []
+        payload = (
+            b"INVITE sip:1000@example.com SIP/2.0\r\n"
+            b"Call-ID: pcapng123\r\n"
+            b"From: <sip:100@example.com>;tag=a\r\n"
+            b"To: <sip:1000@example.com>\r\n"
+            b"CSeq: 1 INVITE\r\n\r\n"
+        )
+        ipv4 = build_ipv4_udp_packet("10.0.0.1", "10.0.0.2", 5060, 5080, payload)
+        pcapng = build_pcapng(build_ethernet_ipv4_frame(ipv4))
+
+        stats = import_pcap(
+            pcapng,
+            PcapImportConfig(ports={5060}, ignore_methods=set()),
+            seen.append,
+        )
+
+        self.assertEqual(stats.packets, 1)
+        self.assertEqual(stats.ipv4_packets, 1)
+        self.assertEqual(stats.sip_messages, 1)
+        self.assertEqual(seen[0].call_id, "pcapng123")
+
+    def test_import_gzipped_pcap(self) -> None:
+        seen = []
+        payload = (
+            b"INVITE sip:1000@example.com SIP/2.0\r\n"
+            b"Call-ID: gzpcap123\r\n"
+            b"From: <sip:100@example.com>;tag=a\r\n"
+            b"To: <sip:1000@example.com>\r\n"
+            b"CSeq: 1 INVITE\r\n\r\n"
+        )
+        ipv4 = build_ipv4_udp_packet("10.0.0.1", "10.0.0.2", 5060, 5080, payload)
+        pcap = build_pcap(build_ethernet_ipv4_frame(ipv4))
+
+        stats = import_pcap(
+            gzip.compress(pcap),
+            PcapImportConfig(ports={5060}, ignore_methods=set()),
+            seen.append,
+        )
+
+        self.assertEqual(stats.sip_messages, 1)
+        self.assertEqual(seen[0].call_id, "gzpcap123")
+
+    def test_import_truncated_gzipped_pcap_when_payload_is_recoverable(self) -> None:
+        seen = []
+        payload = (
+            b"INVITE sip:1000@example.com SIP/2.0\r\n"
+            b"Call-ID: partialgzip123\r\n"
+            b"From: <sip:100@example.com>;tag=a\r\n"
+            b"To: <sip:1000@example.com>\r\n"
+            b"CSeq: 1 INVITE\r\n\r\n"
+        )
+        ipv4 = build_ipv4_udp_packet("10.0.0.1", "10.0.0.2", 5060, 5080, payload)
+        pcap = build_pcap(build_ethernet_ipv4_frame(ipv4))
+        truncated_gzip = gzip.compress(pcap)[:-8]
+
+        stats = import_pcap(
+            truncated_gzip,
+            PcapImportConfig(ports={5060}, ignore_methods=set()),
+            seen.append,
+        )
+
+        self.assertEqual(stats.sip_messages, 1)
+        self.assertEqual(seen[0].call_id, "partialgzip123")
+
     def test_capture_can_ignore_options(self) -> None:
         seen = []
         capture = PacketCapture(seen.append)
@@ -227,6 +318,37 @@ def build_ipv4_udp_packet(src_ip: str, dst_ip: str, src_port: int, dst_port: int
 
 def build_rtp_packet(payload_type: int, sequence: int, timestamp: int, payload: bytes | None = None) -> bytes:
     return struct.pack("!BBHII", 0x80, payload_type, sequence, timestamp, 1234) + (payload if payload is not None else b"\x00" * 160)
+
+
+def build_ethernet_ipv4_frame(ipv4_payload: bytes) -> bytes:
+    return b"\x00\x11\x22\x33\x44\x55" + b"\x66\x77\x88\x99\xaa\xbb" + struct.pack("!H", 0x0800) + ipv4_payload
+
+
+def build_pcap(frame: bytes) -> bytes:
+    global_header = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    packet_header = struct.pack("<IIII", 1, 0, len(frame), len(frame))
+    return global_header + packet_header + frame
+
+
+def build_pcapng(frame: bytes) -> bytes:
+    section_body = struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1)
+    interface_body = struct.pack("<HHI", 1, 0, 65535)
+    enhanced_body = struct.pack("<IIIII", 0, 0, 1_000_000, len(frame), len(frame)) + pad32(frame)
+    return (
+        build_pcapng_block(0x0A0D0D0A, section_body)
+        + build_pcapng_block(0x00000001, interface_body)
+        + build_pcapng_block(0x00000006, enhanced_body)
+    )
+
+
+def build_pcapng_block(block_type: int, body: bytes) -> bytes:
+    total_length = 12 + len(body)
+    return struct.pack("<II", block_type, total_length) + body + struct.pack("<I", total_length)
+
+
+def pad32(value: bytes) -> bytes:
+    padding = (-len(value)) % 4
+    return value + (b"\x00" * padding)
 
 
 if __name__ == "__main__":
